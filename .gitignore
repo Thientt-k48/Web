@@ -1,0 +1,18 @@
+# Bỏ qua thư mục ảo Python
+venv/
+.venv/
+__pycache__/
+
+# Bỏ qua file cấu hình chứa mật khẩu (CỰC KỲ QUAN TRỌNG)
+.env
+config.py
+
+# Bỏ qua dữ liệu test nặng (PDF, Video)
+nas_data/
+*.pdf
+*.mp4
+
+# Bỏ qua file hệ thống
+.DS_Store
+.idea/
+.vscode/
