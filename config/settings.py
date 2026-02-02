@@ -41,9 +41,12 @@ INSTALLED_APPS = [
     'rest_framework_simplejwt',
     'users',
     'documents',
+    'chat',
+    'corsheaders',
 ]
 
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -114,6 +117,7 @@ USE_I18N = True
 
 USE_TZ = True
 
+CORS_ALLOW_ALL_ORIGINS = True
 
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
@@ -124,7 +128,10 @@ STATIC_URL = 'static/'
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
-    )
+    ),
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticated',
+    ],
 }
 
 # Cấu hình thời gian sống của Token (tùy chọn)
@@ -141,3 +148,25 @@ MEDIA_URL = '/media/'
 
 # Thư mục thực tế trên ổ cứng để chứa file
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+
+# settings.py
+
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': 'Chat_bot',  
+        'USER': 'postgres',             
+        'PASSWORD': '12345678',  
+        'HOST': 'localhost',            
+        'PORT': '5432',                
+    }
+}
+
+
+# 2. MongoDB (Lưu Text & Vector)
+MONGO_URI = "mongodb://localhost:27017/"
+MONGO_DB_NAME = "my_rag_project"
+
+# 3. Neo4j (Lưu Quan hệ Knowledge Graph)
+NEO4J_URI = "bolt://localhost:7687"
+NEO4J_AUTH = ("neo4j", "12345678")
