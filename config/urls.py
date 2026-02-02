@@ -29,4 +29,6 @@ urlpatterns = [
     path('api/auth/refresh', TokenRefreshView.as_view(), name='token_refresh'),
 
     path('api/docs/', include('documents.urls')),
+
+    path('api/chat/', include('chat.urls')),
 ]

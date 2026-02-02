@@ -41,6 +41,7 @@ INSTALLED_APPS = [
     'rest_framework_simplejwt',
     'users',
     'documents',
+    'chat',
 ]
 
 MIDDLEWARE = [
@@ -141,3 +142,16 @@ MEDIA_URL = '/media/'
 
 # Thư mục thực tế trên ổ cứng để chứa file
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+
+# settings.py
+
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': 'Chat_bot',  
+        'USER': 'postgres',             
+        'PASSWORD': '12345678',  
+        'HOST': 'localhost',            
+        'PORT': '5432',                
+    }
+}
