@@ -1,19 +1,32 @@
+from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from .models import User
 
+# 1. Serializer để Custom Token (Thêm role vào token)
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
-    def validate(self, attrs):
-        # Lấy kết quả mặc định (access/refresh token)
-        data = super().validate(attrs)
+    @classmethod
+    def get_token(cls, user):
+        token = super().get_token(user)
+
+        # Thêm thông tin role vào trong token
+        token['role'] = user.role
+        token['username'] = user.username
         
-        # LOGIC PHÂN QUYỀN ĐƠN GIẢN:
-        # Nếu là superuser -> role là "admin", ngược lại là "user"
-        if self.user.is_superuser:
-            data['role'] = 'admin'
-        else:
-            data['role'] = 'user'
-            
-        # Bạn có thể thêm các thông tin khác nếu muốn
-        data['username'] = self.user.username
-        data['user_id'] = self.user.id
-        
-        return data
+        return token
+
+# 2. Serializer để Đăng ký (Register)
+class RegisterSerializer(serializers.ModelSerializer):
+    password = serializers.CharField(write_only=True)
+
+    class Meta:
+        model = User
+        fields = ('username', 'password', 'email', 'role')
+
+    def create(self, validated_data):
+        user = User.objects.create_user(
+            username=validated_data['username'],
+            password=validated_data['password'],
+            email=validated_data.get('email', ''),
+            role=validated_data.get('role', 'member')
+        )
+        return user

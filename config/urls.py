@@ -17,7 +17,7 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path, include
 from rest_framework_simplejwt.views import TokenRefreshView
-from users.views import CustomLoginView
+from users.views import CustomLoginView, RegisterView
 from django.conf import settings
 from django.conf.urls.static import static
 
@@ -31,4 +31,6 @@ urlpatterns = [
     path('api/docs/', include('documents.urls')),
 
     path('api/chat/', include('chat.urls')),
+
+    path('api/auth/register/', RegisterView.as_view(), name='register'),
 ]

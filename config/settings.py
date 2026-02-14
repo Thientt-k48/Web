@@ -41,6 +41,7 @@ INSTALLED_APPS = [
     'rest_framework_simplejwt',
     'users',
     'documents',
+    'chat',
 ]
 
 MIDDLEWARE = [
@@ -79,8 +80,12 @@ WSGI_APPLICATION = 'config.wsgi.application'
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': 'Chat_bot',      # VD: my_rag_project (Bạn phải tạo DB này trong pgAdmin trước nhé)
+        'USER': 'postgres',            # Tên đăng nhập Postgres của bạn
+        'PASSWORD': '12345678',# Mật khẩu Postgres của bạn
+        'HOST': 'localhost',
+        'PORT': '5432',
     }
 }
 
@@ -146,3 +151,5 @@ MEDIA_URL = '/media/'
 
 # Thư mục thực tế trên ổ cứng để chứa file
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+
+AUTH_USER_MODEL = 'users.User'
