@@ -6,6 +6,7 @@ from rest_framework import status
 from django.contrib.auth.models import User
 from .models import ChatSession, ChatMessage
 from .serializers import ChatSessionSerializer, ChatHistorySerializer
+from .rag_service import generate_response
 
 # API 14: Tạo phiên chat
 class CreateChatSessionView(APIView):
@@ -138,3 +139,32 @@ class GetChatHistoryView(APIView):
         # 4. Serialize dữ liệu và trả về
         serializer = ChatHistorySerializer(messages, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)   
+
+class ChatAPIView(APIView):
+    def post(self, request):
+        user_message = request.data.get('message')
+        
+        if not user_message:
+            return Response(
+                {"error": "Vui lòng nhập câu hỏi."}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            # Gọi hàm xử lý logic từ service
+            result = generate_response(user_message)
+            
+            return Response({
+                "data": result['response'],
+                "meta": {
+                    "source": result['source'],
+                    "score": result.get('score', 0)
+                }
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            print(f"Lỗi Chat API: {e}")
+            return Response(
+                {"error": "Đã có lỗi xảy ra khi xử lý câu hỏi."}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

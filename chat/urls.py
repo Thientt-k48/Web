@@ -1,5 +1,5 @@
 from django.urls import path
-from .views import CreateChatSessionView, ChatPredictView, SaveChatLogView, GetChatHistoryView
+from .views import ChatAPIView, CreateChatSessionView, ChatPredictView, SaveChatLogView, GetChatHistoryView
 
 urlpatterns = [
     # Đường dẫn: /api/chat/session
@@ -7,4 +7,5 @@ urlpatterns = [
     path('predict', ChatPredictView.as_view(), name='chat_predict'),
     path('log', SaveChatLogView.as_view(), name='save_chat_log'),
     path('history', GetChatHistoryView.as_view(), name='chat_history'),
+    path('api/chat/', ChatAPIView.as_view(), name='api_chat'),
 ]

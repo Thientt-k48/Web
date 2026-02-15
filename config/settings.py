@@ -42,6 +42,7 @@ INSTALLED_APPS = [
     'users',
     'documents',
     'chat',
+    'corsheaders',
 ]
 
 MIDDLEWARE = [
@@ -153,3 +154,9 @@ MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
 AUTH_USER_MODEL = 'users.User'
+
+GOOGLE_API_KEY = "AIzaSyD8a9fEb2f--ztrEhkucrOASxLZYkot1ds"
+NEO4J_URI = "bolt://localhost:7687"
+NEO4J_AUTH = ("neo4j", "12345678")
+
+CORS_ALLOW_ALL_ORIGINS = True
