@@ -1,13 +1,17 @@
 from django.db import models
 
 class Document(models.Model):
-    title = models.CharField(max_length=255, verbose_name="Tên tài liệu")
-    # File sẽ được lưu vào thư mục 'media/pdfs/'
-    file = models.FileField(upload_to='pdfs/', verbose_name="File đính kèm")
-    uploaded_at = models.DateTimeField(auto_now_add=True, verbose_name="Ngày upload")
+    id = models.CharField(max_length=50, primary_key=True, editable=False) 
     
-    # Soft Delete: Thay vì xóa thật, ta chỉ ẩn nó đi (theo yêu cầu STT 5)
+    title = models.CharField(max_length=255)
+    file_name = models.CharField(max_length=255)
+    grade = models.CharField(max_length=50, blank=True, null=True) 
+    subject_orientation = models.CharField(max_length=50, blank=True, null=True) 
+    storage_path = models.CharField(max_length=500) 
+    status = models.CharField(max_length=50, default='uploaded') 
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
     is_deleted = models.BooleanField(default=False)
 
     def __str__(self):
-        return self.title
+        return self.id 

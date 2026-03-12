@@ -1,4 +1,8 @@
+import boto3
+from django.conf import settings
+from pymongo import MongoClient
 from rest_framework import generics, status
+from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser
 
@@ -7,6 +11,19 @@ from .models import Document
 from .serializers import DocumentSerializer
 from utils.db_connection import get_mongo_db, get_neo4j_session
 
+mongo_client = MongoClient(settings.MONGO_URI)
+mongo_db = mongo_client[settings.MONGO_DB_NAME]
+metadata_collection = mongo_db['document_metadata']
+
+protocol = "https" if settings.MINIO_STORAGE_USE_HTTPS else "http"
+s3_client = boto3.client(
+    's3',
+    endpoint_url=f"{protocol}://{settings.MINIO_STORAGE_ENDPOINT}",
+    aws_access_key_id=settings.MINIO_STORAGE_ACCESS_KEY,
+    aws_secret_access_key=settings.MINIO_STORAGE_SECRET_KEY,
+    config=boto3.session.Config(signature_version='s3v4')
+)
+BUCKET_NAME = settings.MINIO_STORAGE_BUCKET_NAME
 
 # API 1: Lấy danh sách (GET /api/docs)
 class DocumentListView(generics.ListAPIView):
@@ -16,57 +33,69 @@ class DocumentListView(generics.ListAPIView):
     permission_classes = [IsAdmin] # Cho phép mọi người truy cập
 
 # API 2: Upload sách (POST /api/docs/upload)
-class DocumentUploadView(generics.CreateAPIView):
-    queryset = Document.objects.all()
-    serializer_class = DocumentSerializer
-    permission_classes = [IsAdmin]
-    parser_classes = [MultiPartParser, FormParser] # Quan trọng: Để xử lý upload file
+class DocumentUploadView(APIView):
+    parser_classes = (MultiPartParser, FormParser)
 
+    def post(self, request, *args, **kwargs):
+        file_obj = request.FILES.get('file')
+        if not file_obj:
+            return Response({"error": "Vui lòng đính kèm file PDF."}, status=status.HTTP_400_BAD_REQUEST)
 
-    def create(self, request, *args, **kwargs):
-        # Logic tùy chỉnh để trả về đúng format file Excel yêu cầu
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        self.perform_create(serializer)
+        title = request.data.get('title', file_obj.name)
+        grade = request.data.get('grade', '10')
+        orientation = request.data.get('orientation', 'ICT')
         
-        # Format trả về theo STT 4: { "id": ..., "path": ... }
-        instance = serializer.instance
-        return Response({
-            "id": instance.id,
-            "path": instance.file.url,
-            "message": "Upload thành công"
-        }, status=status.HTTP_201_CREATED)
-    def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        self.perform_create(serializer)
+        # 1. TẠO ID THEO QUY TẮC: {Lớp}_{Định Hướng} (VD: "11_CS", "12_ICT")
+        doc_id = f"{grade}_{orientation}"
         
-        instance = serializer.instance
+        # 2. KIỂM TRA TỒN TẠI (Chặn upload đè)
+        if Document.objects.filter(id=doc_id).exists():
+            return Response({
+                "error": f"Sách cho Lớp {grade} định hướng {orientation} đã tồn tại trong hệ thống. Vui lòng xóa sách cũ trước khi tải lên sách mới."
+            }, status=status.HTTP_400_BAD_REQUEST)
 
-        # --- ĐOẠN CODE TEST KẾT NỐI (Thêm vào đây) ---
+        # Đảm bảo Bucket tồn tại trên MinIO
         try:
-            # 1. Test Mongo
-            mongo_db = get_mongo_db()
-            mongo_db.logs.insert_one({
-                "action": "upload",
-                "file_id": instance.id,
-                "status": "success"
-            })
-            print("✅ Kết nối MongoDB: THÀNH CÔNG")
+            s3_client.head_bucket(Bucket=BUCKET_NAME)
+        except Exception:
+            s3_client.create_bucket(Bucket=BUCKET_NAME)
 
-            # 2. Test Neo4j
-            with get_neo4j_session() as session:
-                session.run("MERGE (u:User {name: 'TestConnection'})")
-            print("✅ Kết nối Neo4j: THÀNH CÔNG")
-
+        # 3. Upload file gốc lên MinIO (Sử dụng doc_id mới làm tên thư mục cho gọn)
+        file_path = f"lop-{grade}/{orientation}/{doc_id}/original_{file_obj.name}"
+        try:
+            s3_client.upload_fileobj(file_obj, BUCKET_NAME, file_path)
         except Exception as e:
-            print(f"❌ LỖI KẾT NỐI DB: {str(e)}")
-        # ---------------------------------------------
+            return Response({"error": f"Lỗi lưu trữ MinIO: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+        # 4. Lưu thông tin quản lý vào PostgreSQL
+        document = Document.objects.create(
+            id=doc_id,
+            title=title,
+            file_name=file_obj.name,
+            grade=grade,
+            subject_orientation=orientation,
+            storage_path=file_path,
+            status='uploaded'
+        )
+
+        # 5. Lưu Metadata chi tiết vào MongoDB
+        metadata = {
+            "document_id": doc_id,
+            "title": title,
+            "original_file_name": file_obj.name,
+            "grade": grade,
+            "orientation": orientation,
+            "file_size": file_obj.size,
+            "content_type": file_obj.content_type,
+            "extracted_pages": 0,
+            "processed": False
+        }
+        metadata_collection.insert_one(metadata)
+
+        serializer = DocumentSerializer(document)
         return Response({
-            "id": instance.id,
-            "path": instance.file.url,
-            "message": "Upload thành công (Đã check kết nối DB)"
+            "message": f"Upload tài liệu thành công với ID: {doc_id}",
+            "document": serializer.data
         }, status=status.HTTP_201_CREATED)
     
 # API 3: Xóa sách (Soft Delete) - Method: DELETE

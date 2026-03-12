@@ -4,5 +4,4 @@ from .models import Document
 class DocumentSerializer(serializers.ModelSerializer):
     class Meta:
         model = Document
-        fields = ['id', 'title', 'file', 'uploaded_at']
-        # 'file' sẽ trả về URL đầy đủ để download
+        fields = '__all__'
