@@ -82,9 +82,9 @@ WSGI_APPLICATION = 'config.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'Chat_bot',      # VD: my_rag_project (Bạn phải tạo DB này trong pgAdmin trước nhé)
-        'USER': 'postgres',            # Tên đăng nhập Postgres của bạn
-        'PASSWORD': '12345678',# Mật khẩu Postgres của bạn
+        'NAME': 'Chat_bot',      
+        'USER': 'postgres',           
+        'PASSWORD': '12345678',
         'HOST': 'localhost',
         'PORT': '5432',
     }

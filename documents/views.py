@@ -5,11 +5,12 @@ from rest_framework import generics, status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser
-
+from django.shortcuts import get_object_or_404
 from users.permissions import IsAdmin
 from .models import Document
 from .serializers import DocumentSerializer
 from utils.db_connection import get_mongo_db, get_neo4j_session
+import threading
 
 mongo_client = MongoClient(settings.MONGO_URI)
 mongo_db = mongo_client[settings.MONGO_DB_NAME]
@@ -108,3 +109,32 @@ class DocumentDeleteView(generics.DestroyAPIView):
         # Thay vì xóa thật (instance.delete()), ta chỉ đổi flag
         instance.is_deleted = True
         instance.save()
+
+# API 4: Kích hoạt tiến trình xử lý file (POST /api/docs/process/<doc_id>)
+class DocumentProcessView(APIView):
+    permission_classes = [IsAdmin]
+
+    def post(self, request, doc_id):
+        # 1. Tìm tài liệu
+        document = get_object_or_404(Document, id=doc_id, is_deleted=False)
+
+        # 2. Chặn thao tác bấm liên tục
+        if document.status == 'processing':
+            return Response({"message": "Đang xử lý rồi, vui lòng đợi!"}, status=status.HTTP_400_BAD_REQUEST)
+        if document.status == 'completed':
+            return Response({"message": "Tài liệu này đã nạp xong!"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # 3. Đổi trạng thái sang 'processing'
+        document.status = 'processing'
+        document.save()
+
+        # 4. KÍCH HOẠT TIẾN TRÌNH CHẠY NGẦM (ASYNC THREAD)
+        # Tạo một luồng ảo để chạy hàm run_etl_pipeline, truyền ID vào
+        worker_thread = threading.Thread(target=run_etl_pipeline, args=(document.id,))
+        worker_thread.start() # Bắt đầu chạy ngầm
+
+        # 5. Trả về kết quả ngay lập tức cho React
+        return Response({
+            "message": "Đã bắt đầu xử lý tài liệu.",
+            "status": "processing"
+        }, status=status.HTTP_200_OK)

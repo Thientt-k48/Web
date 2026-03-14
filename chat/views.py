@@ -182,8 +182,9 @@ class ChatAPIView(APIView):
         )
 
         return Response({
+            "session_id": session.session_id,
             "data": result['response'],
-            "doc_link": result.get('doc_link'), # THÊM DÒNG NÀY
+            "doc_link": result.get('doc_link'), 
             "meta": {
                 "source": result['source'],
                 "score": result.get('score', 0)
