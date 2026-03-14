@@ -7,12 +7,15 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     @classmethod
     def get_token(cls, user):
         token = super().get_token(user)
-
-        # Thêm thông tin role vào trong token
         token['role'] = user.role
-        token['username'] = user.username
-        
+        token['username'] = user.username   
         return token
+    def validate(self, attrs):
+        data = super().validate(attrs)
+        # Lấy thông tin user hiện tại
+        data['role'] = self.user.role
+        data['username'] = self.user.username
+        return data
 
 # 2. Serializer để Đăng ký (Register)
 class RegisterSerializer(serializers.ModelSerializer):
