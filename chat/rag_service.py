@@ -69,7 +69,7 @@ def search_neo4j_questions(query_vector, threshold=0.85):
     RETURN q.semantic_id AS q_sid, c.semantic_id AS chunk_sid, score
     """
     with neo4j_driver.session() as session:
-        result = session.run(cypher, query_vector=query_vector).data()
+        result = session.run(cypher, query_vector=query_vector, threshold=threshold).data()
         if result:
             return result[0]['q_sid'], result[0]['chunk_sid'], result[0]['score']
     return None, None, 0.0
