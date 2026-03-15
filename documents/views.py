@@ -9,7 +9,7 @@ from django.shortcuts import get_object_or_404
 from users.permissions import IsAdmin
 from .models import Document
 from .serializers import DocumentSerializer
-from utils.db_connection import get_mongo_db, get_neo4j_session
+from utils.db_connection import mongo_db, neo4j_driver
 import threading
 from .etl_service import run_etl_pipeline
 

@@ -8,6 +8,19 @@ from django.db import transaction, connection
 from django.conf import settings
 from .models import Document
 from utils.db_connection import mongo_db, neo4j_driver
+from botocore.client import Config
+import boto3
+import os
+import tempfile
+
+s3_client = boto3.client(
+    's3',
+    endpoint_url=f"{'https' if settings.MINIO_STORAGE_USE_HTTPS else 'http'}://{settings.MINIO_STORAGE_ENDPOINT}",
+    aws_access_key_id=settings.MINIO_STORAGE_ACCESS_KEY,
+    aws_secret_access_key=settings.MINIO_STORAGE_SECRET_KEY,
+    config=Config(signature_version='s3v4'),
+    region_name='us-east-1' # Hoặc region bạn cấu hình
+)
 
 genai.configure(api_key=settings.GOOGLE_API_KEY)
 json_model = genai.GenerativeModel('gemini-2.5-flash', generation_config={"response_mime_type": "application/json"})
@@ -193,10 +206,12 @@ def run_etl_pipeline(doc_id):
     """ 
     Luồng ETL Two-Pass: Đọc nguyên sách lấy cấu trúc -> Xử lý từng bài học -> Nạp DB -> Tính Vector
     """
+    
     uploaded_pdf = None
+    local_temp_path = None
     try:
         doc = Document.objects.get(id=doc_id)
-        file_path = doc.file.path
+        minio_file_path = doc.storage_path # Đây là Key trên MinIO
         grade_track = str(doc.grade)
         
         print(f"[ETL JOB] Bắt đầu xử lý sách: {doc.title} (Lớp {grade_track})")
@@ -204,18 +219,32 @@ def run_etl_pipeline(doc_id):
         doc.save()
 
         # =================================================================
-        # PASS 1: UPLOAD NGUYÊN CUỐN SÁCH & LẤY CẤU TRÚC MỤC LỤC
+        # BƯỚC CHUẨN BỊ: TẢI FILE TỪ MINIO VỀ SERVER CỤC BỘ (TẠM THỜI)
+        # =================================================================
+        print(f"[ETL JOB] Đang tải file từ MinIO về ổ cứng tạm...")
+        # Tạo một file tạm thời trên ổ cứng của server
+        temp_pdf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+        local_temp_path = temp_pdf.name
+        temp_pdf.close() # Đóng lại để nhường quyền ghi cho boto3
+        
+        # Tải file từ MinIO xuống file tạm vừa tạo
+        s3_client.download_file(settings.MINIO_STORAGE_BUCKET_NAME, minio_file_path, local_temp_path)
+
+        # =================================================================
+        # PASS 1: UPLOAD LÊN GOOGLE CLOUD
         # =================================================================
         print("[ETL JOB] Đang tải toàn bộ sách lên Google Cloud...")
-        uploaded_pdf = genai.upload_file(path=file_path, display_name=doc.title)
+        # ĐƯA local_temp_path VÀO ĐÂY THAY VÌ file_path CŨ
+        uploaded_pdf = genai.upload_file(path=local_temp_path, display_name=doc.title) 
         
-        # Chờ file được Google xử lý xong
         while uploaded_pdf.state.name == "PROCESSING":
             print(".", end="")
             time.sleep(2)
             uploaded_pdf = genai.get_file(uploaded_pdf.name)
             
         print("\n[ETL JOB] Đang nhờ AI phân tích cấu trúc vĩ mô của sách...")
+        
+        # ... (ĐOẠN PROMPT_PASS_1 VÀ LẤY MỤC LỤC GIỮ NGUYÊN NHƯ CŨ) ...
         prompt_pass_1 = """
         Bạn là chuyên gia giáo dục. Hãy đọc toàn bộ sách giáo khoa này và lập cấu trúc Mục lục.
         Trả về JSON với mảng "topics" (Chủ đề). Mỗi chủ đề gồm:
@@ -233,7 +262,7 @@ def run_etl_pipeline(doc_id):
         # =================================================================
         # PASS 2: XỬ LÝ SÂU TỪNG BÀI HỌC DỰA TRÊN TỌA ĐỘ TRANG
         # =================================================================
-        pdf_document = fitz.open(file_path)
+        pdf_document = fitz.open(local_temp_path) # Mở file PDF từ ổ cứng để xử lý từng bài học theo tọa độ trang
         
         for topic in book_structure.get('topics', []):
             topic_code = topic.get('topic_code', 'chude_chung')
@@ -273,7 +302,7 @@ def run_etl_pipeline(doc_id):
                     for chunk_idx, chunk in enumerate(lesson_data.get('chunks', [])):
                         chunk_vector = genai.embed_content(model=embedding_model, content=chunk['content'])['embedding']
                         original_id = f"PAGE{start_p+1}_TO_{end_p+1}_CHUNK{chunk_idx+1}"
-                        file_source = f"{doc.file.name}#page={start_p+1}"
+                        file_source = f"{doc.file_name}#page={start_p+1}"
                         
                         insert_to_3_databases(
                             grade_track=grade_track,
@@ -315,3 +344,10 @@ def run_etl_pipeline(doc_id):
                 print("[ETL JOB] Đã dọn dẹp file PDF tạm trên Google Cloud.")
             except Exception as delete_err:
                 print(f"[ETL JOB] Không thể xóa file trên Cloud: {delete_err}")
+        # 2. DỌN RÁC FILE TẠM TRÊN Ổ CỨNG MÁY CHỦ LOCAL
+        if local_temp_path and os.path.exists(local_temp_path):
+            try:
+                os.remove(local_temp_path)
+                print("[ETL JOB] Đã dọn dẹp ổ cứng máy chủ (xóa file temp).")
+            except Exception as e:
+                print(f"[ETL JOB] Không thể xóa file tạm trên ổ cứng: {e}")
