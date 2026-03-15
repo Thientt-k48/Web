@@ -23,6 +23,7 @@ class DataIngestionJob(models.Model):
         ('PROCESSING', 'Đang xử lý'),
         ('COMPLETED', 'Hoàn thành'),
         ('FAILED', 'Thất bại'),
+        ('cancelled', 'Đã hủy'),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

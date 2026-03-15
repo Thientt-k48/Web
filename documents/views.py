@@ -139,3 +139,17 @@ class DocumentProcessView(APIView):
             "message": "Đã bắt đầu xử lý tài liệu.",
             "status": "processing"
         }, status=status.HTTP_200_OK)
+    
+class DocumentCancelView(APIView):
+    """ API để dừng tiến trình ETL đang chạy """
+    permission_classes = [IsAdmin]
+    def post(self, request, pk):
+        try:
+            doc = Document.objects.get(pk=pk)
+            if doc.status == 'processing':
+                doc.status = 'cancelled'
+                doc.save()
+                return Response({'message': 'Đã gửi lệnh dừng tiến trình xử lý.'}, status=status.HTTP_200_OK)
+            return Response({'error': 'Tài liệu này không ở trạng thái đang xử lý.'}, status=status.HTTP_400_BAD_REQUEST)
+        except Document.DoesNotExist:
+            return Response({'error': 'Tài liệu không tồn tại.'}, status=status.HTTP_404_NOT_FOUND)

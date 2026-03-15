@@ -238,6 +238,10 @@ def run_etl_pipeline(doc_id):
         uploaded_pdf = genai.upload_file(path=local_temp_path, display_name=doc.title) 
         
         while uploaded_pdf.state.name == "PROCESSING":
+            doc.refresh_from_db()
+            if doc.status == 'cancelled':
+                print(f"[ETL JOB] 🛑 ĐÃ HỦY: Tiến trình bị dừng bởi người dùng!")
+                return # Thoát ngay lập tức, code sẽ nhảy thẳng xuống block 'finally' để dọn rác
             print(".", end="")
             time.sleep(2)
             uploaded_pdf = genai.get_file(uploaded_pdf.name)
@@ -268,6 +272,11 @@ def run_etl_pipeline(doc_id):
             topic_code = topic.get('topic_code', 'chude_chung')
             
             for lesson in topic.get('lessons', []):
+                doc.refresh_from_db()
+                if doc.status == 'cancelled':
+                    print(f"[ETL JOB] 🛑 ĐÃ HỦY: Tiến trình dừng trước khi xử lý {lesson['lesson_name']}!")
+                    return # Thoát ngay lập tức
+                
                 lesson_name = lesson['lesson_name']
                 # Xử lý Index của PyMuPDF (đếm từ 0)
                 start_p = max(0, lesson['start_page'] - 1) 
@@ -298,9 +307,23 @@ def run_etl_pipeline(doc_id):
                     ])
                     lesson_data = json.loads(response_p2.text)
                     
-                    # Nạp vào 3 DB
-                    for chunk_idx, chunk in enumerate(lesson_data.get('chunks', [])):
-                        chunk_vector = genai.embed_content(model=embedding_model, content=chunk['content'])['embedding']
+                    # ==========================================
+                    # BẮT ĐẦU ĐOẠN SỬA LỖI "LIST / DICT" Ở ĐÂY
+                    # ==========================================
+                    chunks_list = []
+                    # Nếu AI ngoan ngoãn trả về {"chunks": [...] }
+                    if isinstance(lesson_data, dict):
+                        chunks_list = lesson_data.get('chunks', [])
+                    # Nếu AI lười biếng trả thẳng về mảng [...]
+                    elif isinstance(lesson_data, list):
+                        chunks_list = lesson_data
+                        
+                    for chunk_idx, chunk in enumerate(chunks_list):
+                        # Bỏ qua nếu cấu trúc bên trong không phải là dạng Object (Dict)
+                        if not isinstance(chunk, dict): 
+                            continue 
+                            
+                        chunk_vector = genai.embed_content(model=embedding_model, content=chunk.get('content', ''))['embedding']
                         original_id = f"PAGE{start_p+1}_TO_{end_p+1}_CHUNK{chunk_idx+1}"
                         file_source = f"{doc.file_name}#page={start_p+1}"
                         
@@ -310,11 +333,15 @@ def run_etl_pipeline(doc_id):
                             lesson_name=lesson_name,
                             original_id=original_id,
                             file_source=file_source,
-                            chunk_content=chunk['content'],
+                            chunk_content=chunk.get('content', ''),
                             chunk_vector=chunk_vector,
                             keywords=chunk.get('keywords', []),
-                            questions=chunk.get('questions', []) # Đã có cả question và answer
+                            questions=chunk.get('questions', []) 
                         )
+                    # ==========================================
+                    # KẾT THÚC ĐOẠN SỬA LỖI
+                    # ==========================================
+
                 except Exception as inner_e:
                     print(f"⚠️ Cảnh báo: Lỗi khi xử lý bài {lesson_name}: {inner_e}. Hệ thống sẽ bỏ qua bài này và chạy tiếp.")
                 
