@@ -4,8 +4,7 @@ venv/
 __pycache__/
 
 # Bỏ qua file cấu hình chứa mật khẩu (CỰC KỲ QUAN TRỌNG)
-.env
-config.py
+
 
 # Bỏ qua dữ liệu test nặng (PDF, Video)
 nas_data/

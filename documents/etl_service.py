@@ -12,6 +12,7 @@ from botocore.client import Config
 import boto3
 import os
 import tempfile
+import re
 
 s3_client = boto3.client(
     's3',
@@ -29,29 +30,32 @@ embedding_model = 'models/gemini-embedding-001'
 
 
 def insert_to_3_databases(grade_track, topic_code, lesson_name, original_id, file_source, chunk_content, chunk_vector, keywords, questions):
-    """ 
-    Nạp dữ liệu: Postgres (content_chunks, questions), 
-    Mongo (chunks có metadata, questions có answer), 
-    Neo4j (HAS_GRADE, HAS_TOPIC, HAS_LESSON, HAS_CHUNK, HAS_QUESTION) 
-    """
     inserted_mongo_chunk_ids = []
     inserted_mongo_question_ids = []
     
+    # Rút trích ID Bài học cho Neo4j (VD: "Bài 1. ABC" -> "bai1")
+    match_lesson = re.search(r'bài\s*(\d+)', lesson_name, re.IGNORECASE)
+    baihoc_id = f"bai{match_lesson.group(1)}" if match_lesson else "bai_unknown"
+    
     try:
         with transaction.atomic(): 
-            # ==========================================
-            # 1. POSTGRESQL (Bảng content_chunks)
-            # ==========================================
+            # =========================================================
+            # 1. POSTGRESQL (Để Trigger tự động sinh ID)
+            # =========================================================
             with connection.cursor() as cursor:
+                # Ép Postgres trả về semantic_id vừa được Trigger nặn ra
                 cursor.execute("""
-                    INSERT INTO content_chunks (file_source, grade_track, lesson_name, original_id) 
-                    VALUES (%s, %s, %s, %s) RETURNING id, semantic_id;
-                """, [file_source, grade_track, lesson_name, original_id])
-                chunk_db_id, semantic_id = cursor.fetchone()
+                    INSERT INTO content_chunks (file_source, grade_track, topic_code, lesson_name, original_id) 
+                    VALUES (%s, %s, %s, %s, %s) RETURNING id, semantic_id;
+                """, [file_source, grade_track, topic_code, lesson_name, original_id])
+                
+                result = cursor.fetchone()
+                chunk_db_id = result[0]
+                semantic_id = result[1] # <--- ĐÂY LÀ ID 10_chung_chude1_bai1_chunk1 CỦA BẠN!
 
-            # ==========================================
-            # 2. MONGODB (Collection chunks - Lưu metadata và từ khóa)
-            # ==========================================
+            # =========================================================
+            # 2. MONGODB (Dùng ID của Postgres)
+            # =========================================================
             mongo_chunk_doc = {
                 "semantic_id": semantic_id, 
                 "content": chunk_content,
@@ -65,12 +69,10 @@ def insert_to_3_databases(grade_track, topic_code, lesson_name, original_id, fil
             res_chunk = mongo_db.chunks.insert_one(mongo_chunk_doc)
             inserted_mongo_chunk_ids.append(res_chunk.inserted_id)
 
-            # ==========================================
-            # 3. NEO4J (Xây dựng Đồ thị Top-Down và Lưu Vector)
-            # ==========================================
+            # =========================================================
+            # 3. NEO4J (Dùng ID của Postgres)
+            # =========================================================
             with neo4j_driver.session() as session:
-                baihoc_id = semantic_id.split('_')[2] if '_' in semantic_id else "bai_chung"
-                
                 cypher_query = """
                 MERGE (th:Thing {id: "TH", name: "Tin học"})
                 
@@ -92,36 +94,44 @@ def insert_to_3_databases(grade_track, topic_code, lesson_name, original_id, fil
                             baihoc_id=baihoc_id, lesson_name=lesson_name,
                             semantic_id=semantic_id, chunk_vector=chunk_vector)
 
-            # ==========================================
-            # 4. XỬ LÝ CÂU HỎI (Questions)
-            # ==========================================
-            if questions:
-                # Lưu ý: 'questions' bây giờ phải là mảng các dict: [{"question": "...", "answer": "..."}]
+            # =========================================================
+            # 4. XỬ LÝ CÂU HỎI (Để Trigger tự lo ID)
+            # =========================================================
+            if questions and isinstance(questions, list):
                 for q_data in questions:
-                    q_text = q_data.get('question', '')
-                    q_answer = q_data.get('answer', '')
+                    q_text, q_answer = "", ""
                     
-                    # 4.1. Postgres (Bảng questions)
+                    if isinstance(q_data, dict):
+                        q_text = q_data.get('question', '')
+                        q_answer = q_data.get('answer', '')
+                    elif isinstance(q_data, list) and len(q_data) >= 2:
+                        q_text = str(q_data[0])
+                        q_answer = str(q_data[1])
+                    else:
+                        continue 
+                        
+                    if not q_text: continue
+                    
+                    # Cắm vào Postgres, bắt lấy ID sinh ra từ Trigger thứ 2
                     with connection.cursor() as cursor:
                         cursor.execute("""
                             INSERT INTO questions (chunk_id, question_text) 
                             VALUES (%s, %s) RETURNING id, semantic_id;
                         """, [chunk_db_id, q_text])
-                        q_semantic_id = cursor.fetchone()[1]
+                        
+                        res_q = cursor.fetchone()
+                        q_semantic_id = res_q[1] # <--- ID CÂU HỎI (VD: 10_chung_chude1_bai1_chunk1_Q1)
 
-                    # 4.2. Nhúng Vector cho câu hỏi
                     q_vector = genai.embed_content(model=embedding_model, content=q_text)['embedding']
                     
-                    # 4.3. Mongo (Collection questions - Lưu thêm answer và tham chiếu chunk)
-                    res_q = mongo_db.questions.insert_one({
+                    res_mongo_q = mongo_db.questions.insert_one({
                         "semantic_id": q_semantic_id,
                         "chunk_semantic_id": semantic_id,
                         "question_text": q_text,
                         "answer": q_answer
                     })
-                    inserted_mongo_question_ids.append(res_q.inserted_id)
+                    inserted_mongo_question_ids.append(res_mongo_q.inserted_id)
                     
-                    # 4.4. Neo4j (Nút Question và HAS_QUESTION)
                     with neo4j_driver.session() as session:
                         session.run("""
                         MATCH (c:Chunk {semantic_id: $chunk_semantic_id})
@@ -292,12 +302,37 @@ def run_etl_pipeline(doc_id):
                 temp_pdf.close()
                 
                 prompt_pass_2 = f"""
-                Đây là nội dung của bài học: "{lesson_name}".
-                Hãy đọc kỹ và chia nội dung thành các đoạn (chunk) kiến thức ý nghĩa.
-                Trả về JSON có mảng "chunks". Mỗi chunk gồm:
-                1. "content": Nội dung chi tiết của đoạn đó.
-                2. "keywords": Mảng tối đa 3 từ khóa chuyên ngành.
-                3. "questions": Mảng tối đa 2 câu hỏi giả định học sinh có thể hỏi. Phải trả về mảng các Object có dạng: {{"question": "câu hỏi?", "answer": "câu trả lời chi tiết bám sát nội dung chunk"}}
+                Bạn là một chuyên gia giáo dục và thiết kế đề thi môn Tin học. 
+                Dưới đây là nội dung của Bài học: "{lesson_name}". 
+                Hãy đọc, phân tích và chia nhỏ bài học này thành các đoạn kiến thức (chunks) có ý nghĩa trọn vẹn. 
+                
+                YÊU CẦU KHẮT KHE ĐỐI VỚI MỖI ĐOẠN (CHUNK):
+                1. "content": Trích xuất nội dung văn bản gốc, độ dài lý tưởng khoảng 200 - 500 từ.
+                2. "keywords": Trích xuất CHÍNH XÁC 5 từ khóa cốt lõi và quan trọng nhất đại diện cho đoạn văn đó.
+                3. "questions": Sinh ra ÍT NHẤT 10 cặp Câu hỏi và Trả lời (Q&A) bám sát tuyệt đối vào nội dung đoạn này. 
+                   (Gợi ý: Nếu đoạn văn ngắn, hãy khai thác đa dạng các góc độ như: hỏi về định nghĩa, ví dụ, phân tích đặc điểm, ưu/nhược điểm, hoặc câu hỏi tình huống để ĐẢM BẢO LUÔN ĐỦ HOẶC HƠN 10 CÂU HỎI).
+                   
+                TRẢ VỀ DUY NHẤT ĐỊNH DẠNG JSON SAU (Tuyệt đối không dùng markdown ```json):
+                {{
+                    "chunks": [
+                        {{
+                            "content": "Nội dung đoạn văn...",
+                            "keywords": ["từ khóa 1", "từ khóa 2", "từ khóa 3", "từ khóa 4", "từ khóa 5"],
+                            "questions": [
+                                {{"question": "Nội dung câu hỏi 1?", "answer": "Nội dung đáp án 1"}},
+                                {{"question": "Nội dung câu hỏi 2?", "answer": "Nội dung đáp án 2"}},
+                                {{"question": "Nội dung câu hỏi 3?", "answer": "Nội dung đáp án 3"}},
+                                {{"question": "Nội dung câu hỏi 4?", "answer": "Nội dung đáp án 4"}},
+                                {{"question": "Nội dung câu hỏi 5?", "answer": "Nội dung đáp án 5"}},
+                                {{"question": "Nội dung câu hỏi 6?", "answer": "Nội dung đáp án 6"}},
+                                {{"question": "Nội dung câu hỏi 7?", "answer": "Nội dung đáp án 7"}},
+                                {{"question": "Nội dung câu hỏi 8?", "answer": "Nội dung đáp án 8"}},
+                                {{"question": "Nội dung câu hỏi 9?", "answer": "Nội dung đáp án 9"}},
+                                {{"question": "Nội dung câu hỏi 10?", "answer": "Nội dung đáp án 10"}}
+                            ]
+                        }}
+                    ]
+                }}
                 """
                 
                 try:
